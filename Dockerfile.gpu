@@ -1,14 +1,15 @@
-FROM nvidia/cuda:8.0-cudnn5-devel-ubuntu14.04
+FROM nvidia/cuda:8.0-cudnn6-devel-ubuntu14.04
 
-MAINTAINER Sai Soundararaj <saip@outlook.com>
+LABEL authors="Sai Soundararaj <saip@outlook.com>, Pankesh Bamotra <pankesh.bamotra@gmail.com>"
 
-ARG THEANO_VERSION=rel-0.8.2
-ARG TENSORFLOW_VERSION=0.12.1
+ARG THEANO_VERSION=rel-0.9.0
+ARG TENSORFLOW_VERSION=1.3.0
 ARG TENSORFLOW_ARCH=gpu
-ARG KERAS_VERSION=1.2.0
+ARG KERAS_VERSION=2.0.8
 ARG LASAGNE_VERSION=v0.1
 ARG TORCH_VERSION=latest
 ARG CAFFE_VERSION=master
+ARG CUDNN_TAR_FILE=cudnn-8.0-linux-x64-v6.0.tgz
 
 #RUN echo -e "\n**********************\nNVIDIA Driver Version\n**********************\n" && \
 #	cat /proc/driver/nvidia/version && \
@@ -87,6 +88,25 @@ RUN apt-get update && apt-get install -y \
 # Link BLAS library to use OpenBLAS using the alternatives mechanism (https://www.scipy.org/scipylib/building/linux.html#debian-ubuntu)
 	update-alternatives --set libblas.so.3 /usr/lib/openblas-base/libblas.so.3
 
+# Install cuDNN v6.0
+RUN wget http://developer.download.nvidia.com/compute/redist/cudnn/v6.0/${CUDNN_TAR_FILE} -P /root/downloads && \
+    cd /root/downloads && \
+    tar -xzvf ${CUDNN_TAR_FILE}
+    
+ADD cuda/include/cudnn.h /usr/local/cuda-8.0/include
+ADD cuda/lib64/libcudnn* /usr/local/cuda-8.0/lib64/
+RUN chmod a+r /usr/local/cuda-8.0/lib64/libcudnn*
+
+ENV CUDA_HOME=/usr/local/cuda
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64 
+
+RUN cd /usr/local/cuda/lib64 && \
+    rm libcudnn.so && \
+    rm libcudnn.so.6 && \
+    ln libcudnn.so.6.* libcudnn.so.6 && \
+    ln libcudnn.so.6 libcudnn.so && \
+    ldconfig
+    
 # Install pip
 RUN curl -O https://bootstrap.pypa.io/get-pip.py && \
 	python get-pip.py && \
@@ -116,9 +136,16 @@ RUN apt-get update && apt-get install -y \
 	rm -rf /var/lib/apt/lists/*
 
 # Install other useful Python packages using pip
-RUN pip --no-cache-dir install --upgrade ipython && \
+RUN pip --no-cache-dir install --upgrade ipython pandas sklearn && \
 	pip --no-cache-dir install \
 		Cython \
+        click \
+        grequests \
+        h5py \
+        python-dotenv \
+        sqlalchemy-redshift \
+        gevent \
+        awscli \
 		ipykernel \
 		jupyter \
 		path.py \
@@ -224,20 +251,14 @@ RUN git clone --depth 1 https://github.com/opencv/opencv.git /root/opencv && \
 	cd /root/opencv && \
 	mkdir build && \
 	cd build && \
-	cmake -DWITH_QT=ON -DWITH_OPENGL=ON -DFORCE_VTK=ON -DWITH_TBB=ON -DWITH_GDAL=ON -DWITH_XINE=ON -DBUILD_EXAMPLES=ON .. && \
+	cmake -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs -DWITH_QT=ON -DWITH_OPENGL=ON -DFORCE_VTK=ON -DWITH_TBB=ON -DWITH_GDAL=ON -DWITH_XINE=ON -DBUILD_EXAMPLES=ON .. && \
 	make -j"$(nproc)"  && \
 	make install && \
 	ldconfig && \
 	echo 'ln /dev/null /dev/raw1394' >> ~/.bashrc
 
-# Set up notebook config
-COPY jupyter_notebook_config.py /root/.jupyter/
-
-# Jupyter has issues with being run directly: https://github.com/ipython/ipython/issues/7062
-COPY run_jupyter.sh /root/
-
-# Expose Ports for TensorBoard (6006), Ipython (8888)
-EXPOSE 6006 8888
+# Expose Ports for TensorBoard (6006), Ipython (8888), Flask service(8080)
+EXPOSE 6006 8888 8080
 
 WORKDIR "/root"
 CMD ["/bin/bash"]
